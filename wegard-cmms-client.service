@@ -1,0 +1,20 @@
+[Unit]
+Description=Wegard CMMS Client
+
+[Service]
+User=wegard-cmms
+Group=wegard-cmms
+UMask=0077
+Environment=PYTHONPATH=/opt/wegard-cmms/current/src
+Environment=SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+EnvironmentFile=/etc/wegard-cmms/client.env
+ExecStart=/usr/bin/python3 -m wegard_cmms_agent --api-url ${API_URL} --cellular-iface ${CELLULAR_IFACE} --token-file /var/lib/wegard-cmms/token --configs-dir /home/configs --state-dir /var/lib/wegard-cmms --telemetry-file /var/lib/wegard-cmms/telemetry.jsonl
+StandardError=journal
+KillSignal=SIGINT
+TimeoutStopSec=60
+Restart=on-failure
+RestartSec=5
+RestartPreventExitStatus=2
+
+[Install]
+WantedBy=multi-user.target
