@@ -29,7 +29,7 @@ mkdir ~/client-r$N-check && cd ~/client-r$N-check &&
 
 The block stops at the first failure. If `mkdir` fails because the directory exists, remove it or pick another name; start from an empty directory. If a download fails, stop.
 
-Compare both SHA-256 sums with the ones your team received at handoff. If either differs, stop.
+Compare both SHA-256 sums with the ones your team received at handoff. If either differs, or you received no sum for one of them, stop and ask.
 
 Write the trusted signing key beside `verify_release.py`:
 
@@ -76,7 +76,7 @@ It prints the Client's usage and exits 0. The package is now in `~/client-r$N-ch
 
 ## 6. Install
 
-This makes the verified release the tablet's boot service `wegard-cmms-client`. It runs as the system account `wegard-cmms` from `/opt/wegard-cmms/current`, reads its token from `/var/lib/wegard-cmms/token`, keeps its state and telemetry in `/var/lib/wegard-cmms` and reads the Tablet Interface's files in `/home/configs`. Run every block in the step 2 directory, in the same shell, so `N` is still set. Each block stops at the first failure; if one fails, stop.
+This makes the verified release the tablet's boot service `wegard-cmms-client`. It runs as the system account `wegard-cmms` from `/opt/wegard-cmms/current`, reads its token from `/var/lib/wegard-cmms/token`, keeps its state and telemetry in `/var/lib/wegard-cmms` and reads the Tablet Interface's files in `/home/configs`. Run every block in the step 2 directory, in the same shell, so `N` is still set. Each block except the final check stops at the first failure; if one fails, stop.
 
 If a Client already runs on this tablet, stop it and keep it from starting at boot, for example `sudo systemctl disable --now wegard-cmms-client`. Its state is handed over below.
 
@@ -99,10 +99,11 @@ sudo mkdir -p /opt/wegard-cmms/releases &&
 
 If `mkdir` fails because `releases/$N` exists, stop: an installed release is never overwritten. The last line shows `current -> releases/<N>`.
 
-Set the tablet's values: `API_URL` is the backend URL your team received at handoff, `IFACE` the modem's network interface (`ip -br link` lists it; on the test tablet it is `wwu1u1i4`). For example `API_URL=https://cmms.example.com IFACE=wwu1u1i4`. Then write them where the service reads them:
+Set the tablet's values: `API_URL` is the backend URL your team received at handoff, `IFACE` the modem's network interface (`ip -br link` lists it; on the test tablet it is `wwu1u1i4`). Set both in this shell on a line of their own, for example `API_URL=https://cmms.example.com IFACE=wwu1u1i4`. Then write them where the service reads them; the block refuses to run while either is empty:
 
 ```sh
-sudo mkdir -p /etc/wegard-cmms &&
+: "${API_URL:?}" "${IFACE:?}" &&
+  sudo mkdir -p /etc/wegard-cmms &&
   printf 'API_URL=%s\nCELLULAR_IFACE=%s\n' "$API_URL" "$IFACE" | sudo tee /etc/wegard-cmms/client.env
 ```
 
@@ -120,7 +121,7 @@ Then do one of the two:
 - **New tablet.** Write the token your team received for this tablet. Run the command, paste the token, press Enter, then Ctrl-D:
 
   ```sh
-  sudo -u wegard-cmms sh -c 'umask 077 && cat > /var/lib/wegard-cmms/token'
+  sudo -u wegard-cmms sh -c 'umask 077 && cat > /var/lib/wegard-cmms/.token.tmp && mv /var/lib/wegard-cmms/.token.tmp /var/lib/wegard-cmms/token'
   ```
 
 - **A Client ran here before**, stopped above, with its token at `/var/lib/wegard-cmms/token` and its state in `/var/lib/wegard-cmms`. Hand them over in place:
@@ -131,23 +132,25 @@ Then do one of the two:
     sudo ls -lA /var/lib/wegard-cmms
   ```
 
-  Every entry is owned by `wegard-cmms`. If its token or state lived elsewhere, stop and ask.
+  Every entry is owned by `wegard-cmms`. If its token or state lived elsewhere, stop and ask. Note `heartbeatsSent` from `sudo cat /var/lib/wegard-cmms/usage.json`: the old Client's count carries over.
 
 Install and start the service:
 
 ```sh
-sudo install -m 644 wegard-cmms-client.service /etc/systemd/system/ &&
+T0=$(date '+%F %T') &&
+  sudo install -m 644 wegard-cmms-client.service /etc/systemd/system/ &&
   sudo systemctl daemon-reload &&
   sudo systemctl enable --now wegard-cmms-client
 ```
 
-Check it:
+Wait a minute, then check it:
 
 ```sh
 systemctl status wegard-cmms-client --no-pager
-sudo journalctl -u wegard-cmms-client -b --no-pager
+systemctl show wegard-cmms-client -p User -p UMask
+sudo journalctl -u wegard-cmms-client --since "$T0" --no-pager
 sudo tail -n 5 /var/lib/wegard-cmms/telemetry.jsonl
 sudo cat /var/lib/wegard-cmms/usage.json
 ```
 
-The status shows `active (running)` and `enabled`, and the journal has no traceback. The service sends a heartbeat at start: since then telemetry shows no `sending_stopped` or `worker_failed` line and no `heartbeat_failed` without a later `heartbeat_failed_recovered` (a successful heartbeat writes no line of its own), and `heartbeatsSent` in `usage.json` counts it. A service that stops with exit code 2 is not restarted: its journal says why the token or options were refused.
+The status shows `active (running)` and `enabled`, the next line `User=wegard-cmms` and `UMask=0077`, and the journal since the start has no traceback. The service sends a heartbeat at start: since then telemetry shows no `sending_stopped` or `worker_failed` line and no `heartbeat_failed` without a later `heartbeat_failed_recovered` (a successful heartbeat writes no line of its own), and `heartbeatsSent` in `usage.json` counts it (on a handed-over tablet, it is above the count noted earlier). A service that stops with exit code 2 is not restarted: its journal says why the token or options were refused.
