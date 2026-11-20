@@ -150,4 +150,4 @@ sudo tail -n 5 /var/lib/wegard-cmms/telemetry.jsonl
 sudo cat /var/lib/wegard-cmms/usage.json
 ```
 
-The status shows `active (running)` and `enabled`, and the journal has no traceback. The service sends a heartbeat at start: telemetry shows no `heartbeat_failed`, `sending_stopped` or `worker_failed` line since then (a successful heartbeat writes no line of its own), and `heartbeatsSent` in `usage.json` counts it. A service that stops with exit code 2 is not restarted: its journal says why the token or options were refused.
+The status shows `active (running)` and `enabled`, and the journal has no traceback. The service sends a heartbeat at start: since then telemetry shows no `sending_stopped` or `worker_failed` line and no `heartbeat_failed` without a later `heartbeat_failed_recovered` (a successful heartbeat writes no line of its own), and `heartbeatsSent` in `usage.json` counts it. A service that stops with exit code 2 is not restarted: its journal says why the token or options were refused.
