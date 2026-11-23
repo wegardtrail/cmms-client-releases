@@ -87,17 +87,25 @@ getent passwd wegard-cmms ||
   sudo useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin wegard-cmms
 ```
 
-Install the release and make it current:
+Extract the release:
 
 ```sh
 sudo mkdir -p /opt/wegard-cmms/releases &&
   sudo mkdir /opt/wegard-cmms/releases/$N &&
   sudo unzip -q client-$N.zip -d /opt/wegard-cmms/releases/$N &&
-  sudo ln -sfn releases/$N /opt/wegard-cmms/current &&
+  ls /opt/wegard-cmms/releases
+```
+
+If `mkdir` fails because `releases/$N` exists, stop: an installed release is never overwritten. The last line lists your `N` among the installed releases.
+
+Make it current:
+
+```sh
+sudo ln -sfn releases/$N /opt/wegard-cmms/current &&
   ls -l /opt/wegard-cmms/current
 ```
 
-If `mkdir` fails because `releases/$N` exists, stop: an installed release is never overwritten. The last line shows `current -> releases/<N>`.
+The last line shows `current -> releases/<N>`.
 
 Set the tablet's values: `API_URL` is the backend URL your team received at handoff, `IFACE` the modem's network interface (`ip -br link` lists it; on the test tablet it is `wwu1u1i4`). Set both in this shell on a line of their own, for example `API_URL=https://cmms.example.com IFACE=wwu1u1i4`. Then write them where the service reads them; the block refuses to run while either is empty:
 
@@ -154,3 +162,28 @@ sudo cat /var/lib/wegard-cmms/usage.json
 ```
 
 The status shows `active (running)` and `enabled`, the next line `User=wegard-cmms` and `UMask=0077`, and the journal since the start has no traceback. The service sends a heartbeat at start: since then telemetry shows no `sending_stopped` or `worker_failed` line and no `heartbeat_failed` without a later `heartbeat_failed_recovered` (a successful heartbeat writes no line of its own), and `heartbeatsSent` in `usage.json` counts it (on a handed-over tablet, it is above the count noted earlier). A service that stops with exit code 2 is not restarted: its journal says why the token or options were refused.
+
+## 7. Switch releases
+
+Every installed release stays in `/opt/wegard-cmms/releases/<N>`, and `current` points at the one the service runs. The token, `client.env`, state, telemetry and the Outbox live outside the release directories, so a switch keeps them: requests queued while the service is stopped are picked up after the start, and an interrupted upload resumes from its saved progress. `current` changes only while the service is stopped. See what is installed and which release runs:
+
+```sh
+ls /opt/wegard-cmms/releases; readlink /opt/wegard-cmms/current
+```
+
+**Add a newer release.** Do steps 1 to 5 for the new `N` in a fresh directory, then from step 6 run only "Extract the release", in the step 2 directory. The service keeps running the release it ran; `current` does not change.
+
+**Switch.** Set `N` to the release to run, on a line of its own, for example `N=3`. Then:
+
+```sh
+[ -d /opt/wegard-cmms/releases/$N ] &&
+  sudo systemctl stop wegard-cmms-client &&
+  sudo ln -sfn releases/$N /opt/wegard-cmms/current &&
+  T0=$(date '+%F %T') &&
+  sudo systemctl start wegard-cmms-client &&
+  ls -l /opt/wegard-cmms/current
+```
+
+The last line shows `current -> releases/<N>`. If nothing prints, release `N` is not installed and the service was left running; check `N`. Wait a minute, then run step 6's check block.
+
+**Switch back.** Run the switch block with `N` set to the kept release, for example `N=2`, then step 6's check block. Keep the previous release installed: never delete or overwrite a directory under `releases/`.
