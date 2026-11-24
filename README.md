@@ -193,7 +193,7 @@ The last line shows `current -> releases/<N>`. If it prints nothing, or only an 
 When the backend refuses the tablet's token with `401`, because the token was revoked or replaced, the Client stops sending for good: no reports and no heartbeats. The service stays `active (running)` and keeps picking up new requests, which wait until it is restarted with a valid token. A restart with the old token stops again at its first send. Check for a stop:
 
 ```sh
-sudo grep sending_stopped /var/lib/wegard-cmms/telemetry.jsonl
+sudo grep -a sending_stopped /var/lib/wegard-cmms/telemetry.jsonl
 sudo journalctl -u wegard-cmms-client --no-pager | grep sending_stopped
 sudo ls -A /var/lib/wegard-cmms/pending /home/configs/outbox
 ```
