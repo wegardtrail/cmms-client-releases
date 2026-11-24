@@ -1,6 +1,6 @@
 # Wegard CMMS Client releases
 
-Signed releases of the Wegard CMMS tablet Client. Each release `client-r<N>` carries two assets: `client-<N>.zip`, the package, and `client-<N>.zip.sig`, its SSH signature. `verify_release.py` in this repo checks the signature and prints what the package is, and `wegard-cmms-client.service` is the Client's systemd unit, the same on every tablet. This page is the tablet team's procedure for fetching, verifying, inspecting, trying and installing a release on a tablet.
+Signed releases of the Wegard CMMS tablet Client. Each release `client-r<N>` carries two assets: `client-<N>.zip`, the package, and `client-<N>.zip.sig`, its SSH signature. `verify_release.py` in this repo checks the signature and prints what the package is, and `wegard-cmms-client.service` is the Client's systemd unit, the same on every tablet. This page is the tablet team's procedure for fetching, verifying, inspecting, trying and installing a release on a tablet, switching releases and replacing the tablet's token.
 
 ## Requirements
 
@@ -165,7 +165,7 @@ The status shows `active (running)` and `enabled`, the next line `User=wegard-cm
 
 ## 7. Switch releases
 
-Every installed release stays in `/opt/wegard-cmms/releases/<N>`, and `current` points at the one the service runs. The token, `client.env`, state, telemetry and the Outbox live outside the release directories, so a switch keeps them: requests queued while the service is stopped are picked up after the start, and an interrupted upload resumes from its saved progress. `current` changes only while the service is stopped. See what is installed and which release runs:
+Every installed release stays in `/opt/wegard-cmms/releases/<N>`, and `current` points at the one the service runs. The token, `client.env`, state, telemetry and the Outbox live outside the release directories, so a switch keeps them: requests queued while the service is stopped are picked up after the start, and an interrupted upload is completed by the release that runs next. `current` changes only while the service is stopped. See what is installed and which release runs:
 
 ```sh
 ls /opt/wegard-cmms/releases; readlink /opt/wegard-cmms/current
@@ -173,10 +173,10 @@ ls /opt/wegard-cmms/releases; readlink /opt/wegard-cmms/current
 
 **Add a newer release.** Do steps 1 to 5 for the new `N` in a fresh directory, then from step 6 run only "Extract the release", in the step 2 directory. The service keeps running the release it ran; `current` does not change.
 
-**Switch.** Set `N` to the release to run, on a line of its own, for example `N=3`. Then:
+**Switch.** Note `heartbeatsSent` from `sudo cat /var/lib/wegard-cmms/usage.json`; after the switch, step 6's check expects a higher count. Set `N` to the release to run, on a line of its own, for example `N=3`. Then:
 
 ```sh
-[ -d /opt/wegard-cmms/releases/$N ] &&
+: "${N:?}" && [ -d /opt/wegard-cmms/releases/$N ] &&
   sudo systemctl stop wegard-cmms-client &&
   sudo ln -sfn releases/$N /opt/wegard-cmms/current &&
   T0=$(date '+%F %T') &&
@@ -184,6 +184,43 @@ ls /opt/wegard-cmms/releases; readlink /opt/wegard-cmms/current
   ls -l /opt/wegard-cmms/current
 ```
 
-The last line shows `current -> releases/<N>`. If nothing prints, release `N` is not installed and the service was left running; check `N`. Wait a minute, then run step 6's check block.
+The last line shows `current -> releases/<N>`. If it prints nothing, or only an error naming `N`, release `N` is not set or not installed and the service was left running; check `N`. Wait a minute, then run step 6's check block. If the check fails, switch back.
 
 **Switch back.** Run the switch block with `N` set to the kept release, for example `N=2`, then step 6's check block. Keep the previous release installed: never delete or overwrite a directory under `releases/`.
+
+## 8. Replace the token
+
+When the backend refuses the tablet's token with `401`, because the token was revoked or replaced, the Client stops sending for good: no reports and no heartbeats. The service stays `active (running)` and keeps picking up new requests, which wait until it is restarted with a valid token. A restart with the old token stops again at its first send. Check for a stop:
+
+```sh
+sudo grep sending_stopped /var/lib/wegard-cmms/telemetry.jsonl
+sudo journalctl -u wegard-cmms-client --no-pager | grep sending_stopped
+sudo ls -A /var/lib/wegard-cmms/pending /home/configs/outbox
+```
+
+A stop shows a telemetry line with `"event":"sending_stopped"` and `"status":401`, and a journal line `sending_stopped (report 401 <error>)` or `sending_stopped (heartbeat 401 <error>)`. The last command lists the requests held since: they are sent after the restart. Never delete them or anything else in `pending/` or the Outbox.
+
+For a planned token change, follow the same steps without waiting for a stop.
+
+Note `heartbeatsSent` from `sudo cat /var/lib/wegard-cmms/usage.json`; it does not grow while sending is stopped, and step 6's check expects a higher count after the restart.
+
+Write the new token your team received for this tablet. Run the command, paste the token, press Enter, then Ctrl-D:
+
+```sh
+sudo -u wegard-cmms sh -c 'umask 077 && cat > /var/lib/wegard-cmms/.token.tmp && mv /var/lib/wegard-cmms/.token.tmp /var/lib/wegard-cmms/token'
+```
+
+Restart the service:
+
+```sh
+T0=$(date '+%F %T') &&
+  sudo systemctl restart wegard-cmms-client
+```
+
+Wait a minute, then run step 6's check block. The `sending_stopped` line from before the restart may still show in the telemetry tail; only one dated after the restart means the new token was refused too. Then check that the held requests were sent:
+
+```sh
+sudo ls -A /var/lib/wegard-cmms/pending /home/configs/outbox
+```
+
+`pending/` is empty and the Outbox holds nothing but `failed`, if that exists. A request still listed may be waiting for the link; run the command again a few minutes later.
